@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+build/
+dist/
+workspace/
+.omo/
+
+scan_results.txt
+*.log
