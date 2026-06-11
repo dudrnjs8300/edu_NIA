@@ -1,0 +1,16 @@
+{
+  "LLM": {
+    "enabled": true,
+    "provider": "openai_compatible",
+    "base_url": "https://api.openai.com/v1",
+    "model": "gpt-4o-mini",
+    "api_key_env": "OPENAI_API_KEY",
+    "timeout": 60,
+    "temperature": 0.2,
+    "max_tokens": 1500,
+    "max_input_chars": 6000,
+    "use_for_education_summary": true,
+    "use_for_idea_cards": false,
+    "use_for_ai_diagnosis": true
+  }
+}
