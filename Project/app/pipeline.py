@@ -12,7 +12,7 @@ from app.llm_client import LLMClient
 from app.modules.ppt_processor import extract_ppt_files
 from app.modules.stt_processor import transcribe_audio_files
 from app.modules.report_parser import process_reports
-from app.utils.file_utils import ensure_dir, ensure_workspace, write_utf8
+from app.utils.file_utils import ensure_dir, ensure_workspace, load_env_file, write_utf8
 from app.utils.json_utils import read_json, write_json
 from app.utils.logging_utils import setup_logger
 
@@ -113,6 +113,7 @@ class Edu2WorkPipeline:
         self._llm_client_instance: LLMClient | None = None
 
         self.logger = setup_logger()
+        load_env_file(self.project_root / ".env")
 
     def _load_config(self) -> dict[str, object]:
         if not self.config_path.exists():
