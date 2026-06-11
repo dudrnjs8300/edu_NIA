@@ -47,6 +47,21 @@ def _bullets(items: list[str], default: str = "정보 없음", indent: str = "- 
     return [f"{indent}{item}" for item in items] if items else [f"{indent}{default}"]
 
 
+def _render_idea_highlights(cards: list[dict[str, object]], limit: int = 3) -> list[str]:
+    lines: list[str] = []
+    if not cards:
+        return ["- 아이디어 카드가 없습니다."]
+    for idx, card in enumerate(cards[:limit], start=1):
+        title = str(card.get("idea_name", "")).strip() or f"아이디어 {idx}"
+        lines.append(f"- {idx}. {title}")
+        lines.append(f"  - 왜 우선인지: {card.get('priority_reason', '정보 없음')}")
+        lines.append(f"  - 적용 업무: {card.get('applied_work', '정보 없음')}")
+        lines.append(f"  - 필요한 입력자료: {', '.join(_string_list(card.get('input_data', []))) or '정보 없음'}")
+        lines.append(f"  - 기대효과: {card.get('expected_effect', '정보 없음')}")
+        lines.append(f"  - 첫 실행 단계: {card.get('first_step', '정보 없음')}")
+    return lines
+
+
 def _table_lines(rows: list[tuple[str, str]]) -> list[str]:
     lines = ["| 항목 | 내용 |", "|---|---|"]
     for key, value in rows:
@@ -249,11 +264,7 @@ def _build_ai_diagnosis_report(
         "",
         "## 4. 우선 추진 아이디어",
     ]
-    if idea_titles:
-        for idx, title in enumerate(idea_titles[:3], start=1):
-            lines.append(f"- {idx}. {title}")
-    else:
-        lines.append("- 아이디어 카드가 없습니다.")
+    lines.extend(_render_idea_highlights(idea_cards, limit=3))
     lines.extend(
         [
             "",

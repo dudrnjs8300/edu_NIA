@@ -220,6 +220,7 @@ def build_department_map(report_summaries_jsonl: Path, output_dir: Path) -> dict
         "top_keywords": top_keywords,
         "major_work_areas": major_work_areas,
         "work_area": work_areas,
+        "domain_focus_tags": _dedupe_limit(major_work_areas + work_areas + ai_opportunity_types, 40),
         "evidence_keywords": evidence_keywords,
         "related_projects": related_projects,
         "repeated_work_patterns": repeated_work_patterns,
@@ -246,6 +247,8 @@ def build_department_map(report_summaries_jsonl: Path, output_dir: Path) -> dict
     timeline_lines.extend(_bullets(ai_opportunity_types[:10], default="정보 없음", indent="  - "))
     timeline_lines.append("- AI 활용 제안:")
     timeline_lines.extend(_bullets(suggested_ai_use_cases[:10], default="정보 없음", indent="  - "))
+    timeline_lines.append("- 도메인 태그:")
+    timeline_lines.extend(_bullets(_dedupe_limit(major_work_areas + work_areas + ai_opportunity_types, 10), default="정보 없음", indent="  - "))
     timeline_lines.append("")
 
     for year in sorted(yearly.keys(), key=_year_sort_key):
