@@ -3,10 +3,31 @@ __pycache__/
 *.pyo
 *.pyd
 
+.env
+.env.*
+!.env.example
+
 build/
 dist/
 workspace/
 .omo/
+
+data/
+upload/
+backup/
+result/
+
+**/data/
+**/upload/
+**/backup/
+**/result/
+
+*.xlsx
+*.xls
+*.csv
+*.pdf
+*.hwp
+*.hwpx
 
 scan_results.txt
 *.log
