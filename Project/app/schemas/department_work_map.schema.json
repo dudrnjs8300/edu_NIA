@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DepartmentWorkMap",
+  "type": "object",
+  "additionalProperties": {
+    "type": "object",
+    "properties": {
+      "work_items": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "report_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

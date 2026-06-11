@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReportSummary",
+  "type": "object",
+  "properties": {
+    "report_id": {
+      "type": "string"
+    },
+    "file_name": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "department_candidates": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "period": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "report_id",
+    "summary"
+  ]
+}
