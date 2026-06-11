@@ -299,10 +299,12 @@ class Edu2WorkPipeline:
         self._print_paths(result)
 
     def generate_ideas(self) -> None:
+        llm_client = self._llm_client()
         result = generate_idea_cards(
             education_concepts_path=self.workspace_root / "02_education_processed" / "education_concepts.json",
             department_map_path=self.workspace_root / "05_department_analysis" / "department_work_map.json",
             output_dir=self.workspace_root / "06_matching_output",
+            llm_client=llm_client,
         )
         self._print_paths(result)
 

@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from tkinter import BOTH, DISABLED, END, LEFT, NORMAL, RIGHT, X, Y, filedialog, messagebox, scrolledtext, Tk, StringVar, Text, Frame, Listbox, ttk
@@ -84,6 +85,7 @@ class Edu2WorkGUI:
         self.pipeline = Edu2WorkPipeline(project_root=self.project_root)
         self._ensure_runtime_config()
         ensure_workspace(self.pipeline.workspace_root)
+        self.run_log_path = self.pipeline.workspace_root / "run_logs" / "latest_run.log"
 
         self.education_files: list[Path] = []
         self.ntis_csv: Path | None = None
@@ -91,12 +93,21 @@ class Edu2WorkGUI:
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.running = False
         self.worker_failed = False
+        self.worker_error_message = ""
         self.results_ready = self._results_exist()
+        self.llm_test_running = False
+        self.llm_test_failed = False
+        self.llm_test_message = ""
 
         self.education_var = StringVar(value="선택된 교육자료 없음")
         self.education_preview_var = StringVar(value="아직 선택된 파일이 없습니다.")
         self.csv_var = StringVar(value="선택된 NTIS CSV 없음")
         self.status_var = StringVar(value="대기 중")
+        self.llm_status_var = StringVar(value="LLM 상태를 불러오는 중입니다.")
+        self.llm_detail_var = StringVar(value="")
+        self.llm_key_var = StringVar(value="API Key 상태: 확인 전")
+        self.llm_error_var = StringVar(value="마지막 LLM 오류: 없음")
+        self.api_key_input_var = StringVar(value="")
 
         self._build_ui()
         self._refresh_result_buttons()
@@ -218,6 +229,11 @@ class Edu2WorkGUI:
         style = "Primary.TButton" if primary else ("Compact.TButton" if compact else "Secondary.TButton")
         return ttk.Button(parent, text=text, command=command, style=style)
 
+    def _entry(self, parent: Frame | object, *, textvariable: StringVar, show: str = ""):
+        if self.using_ctk:
+            return ctk.CTkEntry(parent, textvariable=textvariable, show=show, height=34)
+        return ttk.Entry(parent, textvariable=textvariable, show=show)
+
     def _text_widget(self, parent: Frame | object, *, height: int, monospace: bool = False):
         font = ("Consolas", 10) if monospace else ("Segoe UI", 10)
         widget = scrolledtext.ScrolledText(parent, wrap="word", height=height, font=font, bg="#FFFFFF", fg=TEXT, insertbackground=TEXT, relief="solid", borderwidth=1)
@@ -230,6 +246,7 @@ class Edu2WorkGUI:
 
         self._build_hero(main)
         self._build_input_cards(main)
+        self._build_llm_card(main)
         self._build_actions_card(main)
         self._build_log_card(main)
         self._build_status_row(main)
@@ -305,6 +322,39 @@ class Edu2WorkGUI:
         self.csv_label = self._label(parent, text=self.csv_var.get(), kind="body")
         self.csv_label.pack(anchor="w", padx=16, pady=(4, 16))
 
+    def _build_llm_card(self, parent) -> None:
+        frame = self._frame(parent, card=True)
+        frame.pack(fill=X, pady=(0, 14))
+
+        self._label(frame, text="LLM 상태", kind="section").pack(anchor="w", padx=16, pady=(16, 6))
+        self.llm_status_label = self._label(frame, text=self.llm_status_var.get(), kind="body")
+        self.llm_status_label.pack(anchor="w", padx=16)
+        self.llm_detail_label = self._label(frame, text=self.llm_detail_var.get(), kind="muted", wraplength=900)
+        self.llm_detail_label.pack(anchor="w", padx=16, pady=(2, 0))
+        self.llm_key_label = self._label(frame, text=self.llm_key_var.get(), kind="muted")
+        self.llm_key_label.pack(anchor="w", padx=16, pady=(2, 0))
+        self.llm_error_label = self._label(frame, text=self.llm_error_var.get(), kind="muted", wraplength=900)
+        self.llm_error_label.pack(anchor="w", padx=16, pady=(2, 0))
+
+        input_row = self._frame(frame)
+        input_row.pack(fill=X, padx=16, pady=(12, 8))
+        self.api_key_entry = self._entry(input_row, textvariable=self.api_key_input_var, show="*")
+        if self.using_ctk:
+            self.api_key_entry.pack(side=LEFT, fill=X, expand=True)
+        else:
+            self.api_key_entry.pack(side=LEFT, fill=X, expand=True)
+
+        button_row = self._frame(frame)
+        button_row.pack(fill=X, padx=16, pady=(0, 16))
+        self.apply_api_key_button = self._button(button_row, text="현재 세션에 적용", command=self.apply_api_key, compact=True)
+        self.apply_api_key_button.pack(side=LEFT)
+        self.check_api_key_button = self._button(button_row, text="API Key 확인", command=self.refresh_llm_status, compact=True)
+        self.check_api_key_button.pack(side=LEFT, padx=8)
+        self.test_llm_button = self._button(button_row, text="LLM 테스트", command=self.test_llm, compact=True)
+        self.test_llm_button.pack(side=LEFT, padx=8)
+
+        self.refresh_llm_status()
+
     def _build_actions_card(self, parent) -> None:
         frame = self._frame(parent, card=True)
         frame.pack(fill=X, pady=(0, 14))
@@ -364,6 +414,12 @@ class Edu2WorkGUI:
         self.csv_button.configure(state=state)
         self.clear_education_button.configure(state=state)
         self.clear_csv_button.configure(state=state)
+        if hasattr(self, "apply_api_key_button"):
+            self.apply_api_key_button.configure(state=state)
+        if hasattr(self, "check_api_key_button"):
+            self.check_api_key_button.configure(state=state)
+        if hasattr(self, "test_llm_button"):
+            self.test_llm_button.configure(state=state)
         self.status_var.set("분석 중입니다..." if running else ("대기 중" if not self.results_ready else "분석이 완료되었습니다."))
         self.run_status_label.configure(text=self.status_var.get())
         if hasattr(self, "footer_status_label"):
@@ -435,6 +491,79 @@ class Edu2WorkGUI:
             self.csv_var.set(f"선택된 NTIS CSV: {self.ntis_csv.name}")
         self.csv_label.configure(text=self.csv_var.get())
 
+    def _set_label_text(self, label, text: str) -> None:
+        try:
+            label.configure(text=text)
+        except Exception:
+            pass
+
+    def refresh_llm_status(self) -> None:
+        client = self.pipeline._llm_client()
+        snapshot = client.status_snapshot()
+        mode = str(snapshot.get("current_mode", "disabled"))
+        enabled = bool(snapshot.get("enabled", False))
+        provider = str(snapshot.get("provider", ""))
+        model = str(snapshot.get("model", ""))
+        api_key_env = str(snapshot.get("api_key_env", ""))
+        api_key_found = bool(snapshot.get("api_key_found", False))
+        last_error = str(snapshot.get("last_error_message", "")).strip() or "없음"
+
+        self.llm_status_var.set(f"현재 모드: {mode}")
+        self.llm_detail_var.set(f"enabled={str(enabled).lower()} | provider={provider} | model={model} | api_key_env={api_key_env}")
+        self.llm_key_var.set(f"API Key 상태: {'있음' if api_key_found else '없음'}")
+        self.llm_error_var.set(f"마지막 LLM 오류: {last_error}")
+
+        if hasattr(self, "llm_status_label"):
+            self._set_label_text(self.llm_status_label, self.llm_status_var.get())
+        if hasattr(self, "llm_detail_label"):
+            self._set_label_text(self.llm_detail_label, self.llm_detail_var.get())
+        if hasattr(self, "llm_key_label"):
+            self._set_label_text(self.llm_key_label, self.llm_key_var.get())
+        if hasattr(self, "llm_error_label"):
+            self._set_label_text(self.llm_error_label, self.llm_error_var.get())
+
+    def apply_api_key(self) -> None:
+        api_key = self.api_key_input_var.get().strip()
+        if not api_key:
+            messagebox.showwarning("안내", "API Key를 입력하세요.")
+            return
+        os.environ["OPENAI_API_KEY"] = api_key
+        client = self.pipeline._llm_client()
+        client.disabled_for_session = False
+        client.last_error_kind = ""
+        client.last_error_message = ""
+        self.refresh_llm_status()
+        messagebox.showinfo("적용 완료", "현재 세션에 API Key를 적용했습니다. 파일에는 저장하지 않습니다.")
+
+    def test_llm(self) -> None:
+        if self.llm_test_running:
+            return
+        self.llm_test_running = True
+        if hasattr(self, "test_llm_button"):
+            self.test_llm_button.configure(state=DISABLED)
+        self._append_log("[llm-test] 테스트를 시작합니다.\n")
+
+        def worker() -> None:
+            try:
+                ok, detail = self.pipeline._llm_client().test_connection()
+                if ok:
+                    self.llm_test_failed = False
+                    self.llm_test_message = detail
+                    self.log_queue.put("[llm-test] success\n")
+                else:
+                    self.llm_test_failed = True
+                    self.llm_test_message = detail
+                    self.log_queue.put(f"[llm-test] failed: {detail}\n")
+            except Exception as exc:
+                self.llm_test_failed = True
+                self.llm_test_message = str(exc)
+                self.log_queue.put(f"[llm-test] failed: {exc}\n")
+                self.log_queue.put(traceback.format_exc())
+            finally:
+                self.log_queue.put("__LLMTEST_DONE__")
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def clear_education_files(self) -> None:
         self.education_files = []
         self._update_education_display()
@@ -477,6 +606,19 @@ class Edu2WorkGUI:
         self.log_text.insert(END, text)
         self.log_text.see(END)
         self.log_text.configure(state=DISABLED)
+        try:
+            self.run_log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.run_log_path.open("a", encoding="utf-8") as f:
+                f.write(text)
+        except Exception:
+            pass
+
+    def _reset_run_log(self) -> None:
+        try:
+            self.run_log_path.parent.mkdir(parents=True, exist_ok=True)
+            self.run_log_path.write_text("", encoding="utf-8")
+        except Exception:
+            pass
 
     def run_analysis(self) -> None:
         if not self.education_files and self.ntis_csv is None:
@@ -488,9 +630,14 @@ class Edu2WorkGUI:
 
         self._set_running(True)
         self.worker_failed = False
+        self.worker_error_message = ""
         self.results_ready = False
+        self._reset_run_log()
+        self.refresh_llm_status()
         self._refresh_result_buttons()
         self._append_log("[gui] 파일 복사 및 파이프라인 실행을 시작합니다.\n")
+        for line in self.pipeline._llm_client().status_lines():
+            self._append_log(line + "\n")
 
         worker = threading.Thread(target=self._run_pipeline_worker, daemon=True)
         worker.start()
@@ -504,7 +651,9 @@ class Edu2WorkGUI:
             self.log_queue.put("__SUCCESS__")
         except Exception as exc:
             self.worker_failed = True
-            self.log_queue.put(f"__ERROR__:{exc}")
+            self.worker_error_message = f"{type(exc).__name__}: {exc}"
+            self.log_queue.put(f"__ERROR__:{self.worker_error_message}")
+            self.log_queue.put(traceback.format_exc())
         finally:
             self.log_queue.put("__DONE__")
 
@@ -514,16 +663,27 @@ class Edu2WorkGUI:
                 item = self.log_queue.get_nowait()
                 if item == "__SUCCESS__":
                     continue
+                if item == "__LLMTEST_DONE__":
+                    self.llm_test_running = False
+                    if hasattr(self, "test_llm_button"):
+                        self.test_llm_button.configure(state=NORMAL if not self.running else DISABLED)
+                    self.refresh_llm_status()
+                    if self.llm_test_failed:
+                        messagebox.showerror("LLM 테스트 실패", f"LLM 테스트 실패: {self.llm_test_message}")
+                    else:
+                        messagebox.showinfo("LLM 테스트 성공", "LLM 테스트 성공")
+                    continue
                 if item == "__DONE__":
                     self._set_running(False)
                     self.results_ready = not self.worker_failed and self._results_exist()
                     self._refresh_result_buttons()
                     if self.worker_failed:
-                        self.status_var.set("분석 중 오류가 발생했습니다. 로그를 확인하세요.")
+                        error_text = self.worker_error_message or "로그를 확인하세요."
+                        self.status_var.set(f"분석 중 오류가 발생했습니다: {error_text}")
                         self.run_status_label.configure(text=self.status_var.get())
                         if hasattr(self, "footer_status_label"):
                             self.footer_status_label.configure(text=self.status_var.get())
-                        messagebox.showerror("오류", "분석 중 오류가 발생했습니다. 로그를 확인하세요.")
+                        messagebox.showerror("오류", self.status_var.get())
                     else:
                         self.status_var.set("분석이 완료되었습니다.")
                         self.run_status_label.configure(text=self.status_var.get())
@@ -532,15 +692,15 @@ class Edu2WorkGUI:
                         messagebox.showinfo("완료", "분석이 완료되었습니다.")
                     continue
                 if item.startswith("__ERROR__:"):
+                    error_text = item.split(":", 1)[1].strip()
                     self._set_running(False)
                     self.results_ready = self._results_exist()
                     self._refresh_result_buttons()
-                    self.status_var.set("분석 중 오류가 발생했습니다. 로그를 확인하세요.")
+                    self.status_var.set(f"분석 중 오류가 발생했습니다: {error_text}")
                     self.run_status_label.configure(text=self.status_var.get())
                     if hasattr(self, "footer_status_label"):
                         self.footer_status_label.configure(text=self.status_var.get())
-                    self._append_log(f"[error] 분석 중 오류가 발생했습니다: {item.split(':', 1)[1]}\n")
-                    messagebox.showerror("오류", "분석 중 오류가 발생했습니다. 로그를 확인하세요.")
+                    self._append_log(f"[error] 분석 중 오류가 발생했습니다: {error_text}\n")
                     continue
                 self._append_log(item)
         except queue.Empty:
