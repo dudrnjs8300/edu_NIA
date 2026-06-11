@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.llm_client import LLMClient
+from app.utils.analysis_meta import build_analysis_meta, render_analysis_meta_block
 from app.utils.file_utils import read_utf8, write_utf8
 from app.utils.json_utils import read_json
 
@@ -17,6 +18,18 @@ def _load_json_if_exists(path: Path) -> object:
     if not path.exists():
         return {}
     return read_json(path)
+
+
+def _load_idea_cards_payload(path: Path) -> tuple[list[dict[str, object]], dict[str, object]]:
+    payload = _load_json_if_exists(path)
+    if isinstance(payload, dict):
+        cards = payload.get("cards", [])
+        meta = payload.get("analysis_meta", {})
+        if isinstance(cards, list):
+            return [card for card in cards if isinstance(card, dict)], meta if isinstance(meta, dict) else {}
+    if isinstance(payload, list):
+        return [card for card in payload if isinstance(card, dict)], {}
+    return [], {}
 
 
 def _string_list(value: object) -> list[str]:
@@ -48,11 +61,53 @@ def _load_prompt_text(filename: str, default_text: str) -> str:
     return default_text
 
 
+def _report_meta_block(
+    *,
+    education_summary_text: str,
+    concepts: dict[str, object],
+    work_map: dict[str, object],
+    idea_meta: dict[str, object] | None,
+    llm_client: LLMClient | None,
+) -> str:
+    stats = concepts.get("analysis_stats", {}) if isinstance(concepts, dict) else {}
+    generated_with_llm = bool(idea_meta.get("generated_with_llm", False)) if isinstance(idea_meta, dict) else False
+    if not generated_with_llm and llm_client is not None:
+        generated_with_llm = bool(llm_client.is_enabled())
+    last_error = ""
+    if llm_client is not None:
+        last_error = str(getattr(llm_client, "last_error_message", "") or "")
+    if isinstance(idea_meta, dict):
+        fallback_reason = str(idea_meta.get("fallback_reason", "") or "").strip()
+    else:
+        fallback_reason = ""
+    meta = build_analysis_meta(
+        llm_used=generated_with_llm,
+        generation_mode=llm_client.current_mode() if llm_client is not None else "rule-based fallback",
+        fallback_reason=fallback_reason or last_error or ("LLM 미사용" if not generated_with_llm else ""),
+        input_file_count=int(stats.get("input_file_count", 0) or 0) if isinstance(stats, dict) else 0,
+        successful_file_count=int(stats.get("successful_file_count", 0) or 0) if isinstance(stats, dict) else 0,
+        failed_file_count=int(stats.get("failed_file_count", 0) or 0) if isinstance(stats, dict) else 0,
+        extracted_char_count=int(stats.get("total_extracted_chars", 0) or 0) if isinstance(stats, dict) else 0,
+        ntis_project_count=int(work_map.get("project_count", 0) or 0) if isinstance(work_map, dict) else 0,
+        last_llm_error=last_error,
+    )
+    return render_analysis_meta_block(meta)
+
+
+def _strip_leading_meta_block(text: str) -> str:
+    marker = "# 교육자료 요약"
+    index = text.find(marker)
+    if index > 0:
+        return text[index:]
+    return text
+
+
 def _build_education_result_report(
     education_summary_text: str,
     concepts: dict[str, object],
     work_map: dict[str, object],
     idea_cards: list[dict[str, object]],
+    meta_block: str = "",
 ) -> str:
     core_topics = _limit(_string_list(concepts.get("core_topics", [])), 10, "핵심 주제 없음")
     key_messages = _limit(_string_list(concepts.get("key_messages", [])), 3, "주요 메시지 없음")
@@ -61,6 +116,8 @@ def _build_education_result_report(
 
     result_lines = [
         "# 교육결과 보고서",
+        "",
+        meta_block.strip(),
         "",
         "## 기본 정보",
     ]
@@ -150,6 +207,7 @@ def _build_ai_diagnosis_report(
     work_map: dict[str, object],
     idea_cards: list[dict[str, object]],
     llm_client: LLMClient | None = None,
+    meta_block: str = "",
 ) -> str:
     project_count = int(work_map.get("project_count", 0) or 0)
     years = _string_list(work_map.get("years", []))
@@ -164,6 +222,8 @@ def _build_ai_diagnosis_report(
 
     lines = [
         "# AI 활용 진단 보고서",
+        "",
+        meta_block.strip(),
         "",
         "## 1. 분석 개요",
         "- NTIS 과제목록과 교육자료를 기반으로 부서 업무와 AI 교육내용의 연결 가능성을 분석했습니다.",
@@ -269,15 +329,21 @@ def export_final_packet(
     education_summary_text = _read_if_exists(education_summary_path)
     concepts = _load_json_if_exists(education_concepts_path)
     work_map = _load_json_if_exists(department_map_path)
-    idea_cards = _load_json_if_exists(idea_cards_json_path)
+    idea_cards, idea_meta = _load_idea_cards_payload(idea_cards_json_path)
     if not isinstance(concepts, dict):
         concepts = {}
     if not isinstance(work_map, dict):
         work_map = {}
-    if not isinstance(idea_cards, list):
-        idea_cards = []
 
-    ai_diagnosis_report_text = _build_ai_diagnosis_report(work_map, idea_cards, llm_client=llm_client)
+    meta_block = _report_meta_block(
+        education_summary_text=education_summary_text,
+        concepts=concepts,
+        work_map=work_map,
+        idea_meta=idea_meta,
+        llm_client=llm_client,
+    )
+
+    ai_diagnosis_report_text = _build_ai_diagnosis_report(work_map, idea_cards, llm_client=llm_client, meta_block=meta_block)
     ai_diagnosis_report_written = write_utf8(ai_diagnosis_report_path, ai_diagnosis_report_text)
 
     education_result_report_text = _build_education_result_report(
@@ -285,6 +351,7 @@ def export_final_packet(
         concepts=concepts,
         work_map=work_map,
         idea_cards=idea_cards,
+        meta_block=meta_block,
     )
     education_result_report_written = write_utf8(education_result_report_path, education_result_report_text)
 
@@ -321,14 +388,18 @@ def export_final_packet(
     ]
     packet_path = write_utf8(output_dir / "final_input_packet.md", "\n".join(packet_lines).strip() + "\n")
 
+    education_summary_body = _strip_leading_meta_block(education_summary_text)
+
     final_report_lines = [
         "# 최종 보고서 초안",
+        "",
+        meta_block.strip(),
         "",
         "## 1. 추진 배경",
         "교육자료와 부서 업무자료를 연결해 실제 적용 가능한 AI 활용 과제를 도출하기 위해 본 분석을 수행했습니다.",
         "",
         "## 2. 교육내용 요약",
-        education_summary_text or "교육 요약 자료가 없습니다.",
+        education_summary_body or "교육 요약 자료가 없습니다.",
         "",
         "## 3. 부서 업무자료 분석 결과",
         _read_if_exists(department_timeline_path) or "부서 업무 타임라인 자료가 없습니다.",

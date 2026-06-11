@@ -100,8 +100,13 @@ def build_department_map(report_summaries_jsonl: Path, output_dir: Path) -> dict
 
     yearly: dict[str, dict[str, object]] = {}
     all_major_work_areas: list[str] = []
+    all_work_areas: list[str] = []
+    all_evidence_keywords: list[str] = []
+    all_related_projects: list[str] = []
     all_data_assets: list[str] = []
     all_automation_candidates: list[str] = []
+    all_ai_opportunity_types: list[str] = []
+    all_suggested_ai_use_cases: list[str] = []
     repeated_work_patterns: list[str] = []
     program_values: list[str] = []
     source_types: list[str] = []
@@ -126,21 +131,39 @@ def build_department_map(report_summaries_jsonl: Path, output_dir: Path) -> dict
         year_bucket["project_count"] = int(year_bucket["project_count"]) + 1
 
         project_title = str(row.get("project_title", "")).strip()
+        work_area = str(row.get("work_area", "")).strip()
         if project_title:
             year_bucket["project_titles"].append(project_title)
+            all_related_projects.append(project_title)
 
         main_work_areas = _derive_work_categories(row)
         data_assets = [str(x).strip() for x in row.get("data_types", []) if str(x).strip()]
         automation_candidates = [str(x).strip() for x in row.get("ai_opportunity_keywords", []) if str(x).strip()]
+        evidence_keywords = [str(x).strip() for x in row.get("evidence_keywords", []) if str(x).strip()]
+        ai_opportunity_types = [str(x).strip() for x in row.get("ai_opportunity_types", []) if str(x).strip()]
+        suggested_ai_use_cases = [str(x).strip() for x in row.get("suggested_ai_use_cases", []) if str(x).strip()]
 
         year_bucket["main_work_areas"].extend(main_work_areas)
         year_bucket["data_assets"].extend(data_assets)
         year_bucket["automation_candidates"].extend(automation_candidates)
+        if work_area:
+            year_bucket.setdefault("work_areas", [])
+            year_bucket["work_areas"].append(work_area)
+            all_work_areas.append(work_area)
+        year_bucket.setdefault("evidence_keywords", [])
+        year_bucket["evidence_keywords"].extend(evidence_keywords)
+        year_bucket.setdefault("ai_opportunity_types", [])
+        year_bucket["ai_opportunity_types"].extend(ai_opportunity_types)
+        year_bucket.setdefault("suggested_ai_use_cases", [])
+        year_bucket["suggested_ai_use_cases"].extend(suggested_ai_use_cases)
 
         all_major_work_areas.extend(main_work_areas)
         repeated_work_patterns.extend([str(x).strip() for x in row.get("repeated_tasks", []) if str(x).strip()])
         all_data_assets.extend(data_assets)
         all_automation_candidates.extend(automation_candidates)
+        all_evidence_keywords.extend(evidence_keywords)
+        all_ai_opportunity_types.extend(ai_opportunity_types)
+        all_suggested_ai_use_cases.extend(suggested_ai_use_cases)
 
         if program_name:
             program_values.append(program_name)
@@ -155,9 +178,14 @@ def build_department_map(report_summaries_jsonl: Path, output_dir: Path) -> dict
     top_keywords = [keyword for keyword, _ in keyword_counter.most_common(30)]
 
     major_work_areas = _dedupe_limit(all_major_work_areas, 30)
+    work_areas = _dedupe_limit(all_work_areas, 30)
+    evidence_keywords = _dedupe_limit(all_evidence_keywords, 40)
+    related_projects = _dedupe_limit(all_related_projects, 40)
     repeated_work_patterns = _dedupe_limit(repeated_work_patterns, 30)
     data_assets = _dedupe_limit(all_data_assets, 30)
     automation_candidates = _dedupe_limit(all_automation_candidates, 30)
+    ai_opportunity_types = _dedupe_limit(all_ai_opportunity_types, 30)
+    suggested_ai_use_cases = _dedupe_limit(all_suggested_ai_use_cases, 30)
 
     timeline: list[dict[str, object]] = []
     for year in sorted(yearly.keys(), key=_year_sort_key):
@@ -168,8 +196,12 @@ def build_department_map(report_summaries_jsonl: Path, output_dir: Path) -> dict
                 "project_count": int(info["project_count"]),
                 "representative_projects": _dedupe_limit(info["project_titles"], 10),
                 "main_work_areas": _dedupe_limit(info["main_work_areas"], 15),
+                "work_areas": _dedupe_limit(info.get("work_areas", []), 15),
                 "data_assets": _dedupe_limit(info["data_assets"], 10) or _dedupe_limit(data_assets, 10),
                 "automation_candidates": _dedupe_limit(info["automation_candidates"], 10) or _dedupe_limit(automation_candidates, 10),
+                "evidence_keywords": _dedupe_limit(info.get("evidence_keywords", []), 12),
+                "ai_opportunity_types": _dedupe_limit(info.get("ai_opportunity_types", []), 12),
+                "suggested_ai_use_cases": _dedupe_limit(info.get("suggested_ai_use_cases", []), 12),
             }
         )
 
@@ -187,9 +219,14 @@ def build_department_map(report_summaries_jsonl: Path, output_dir: Path) -> dict
         "source_types": source_types,
         "top_keywords": top_keywords,
         "major_work_areas": major_work_areas,
+        "work_area": work_areas,
+        "evidence_keywords": evidence_keywords,
+        "related_projects": related_projects,
         "repeated_work_patterns": repeated_work_patterns,
         "data_assets": data_assets,
         "automation_candidates": automation_candidates,
+        "ai_opportunity_types": ai_opportunity_types,
+        "suggested_ai_use_cases": suggested_ai_use_cases,
         "timeline": timeline,
     }
     map_path = write_json(output_dir / "department_work_map.json", department_work_map)
@@ -199,10 +236,16 @@ def build_department_map(report_summaries_jsonl: Path, output_dir: Path) -> dict
     timeline_lines.append(f"- 분석 연도: {', '.join(years) if years else '정보 없음'}")
     timeline_lines.append("- 주요 업무영역:")
     timeline_lines.extend(_bullets(major_work_areas[:10], default="정보 없음", indent="  - "))
+    timeline_lines.append("- 세부 work_area:")
+    timeline_lines.extend(_bullets(work_areas[:10], default="정보 없음", indent="  - "))
     timeline_lines.append("- 주요 데이터 자산:")
     timeline_lines.extend(_bullets(data_assets[:10], default="정보 없음", indent="  - "))
     timeline_lines.append("- 자동화 후보:")
     timeline_lines.extend(_bullets(automation_candidates[:10], default="정보 없음", indent="  - "))
+    timeline_lines.append("- AI 적용 유형:")
+    timeline_lines.extend(_bullets(ai_opportunity_types[:10], default="정보 없음", indent="  - "))
+    timeline_lines.append("- AI 활용 제안:")
+    timeline_lines.extend(_bullets(suggested_ai_use_cases[:10], default="정보 없음", indent="  - "))
     timeline_lines.append("")
 
     for year in sorted(yearly.keys(), key=_year_sort_key):
